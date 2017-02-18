@@ -78,7 +78,8 @@ UART0 (PA1, PA0) sends data to the PC via the USB debug cable, 115200 baud rate
 Port A, SSI0 (PA2, PA3, PA5, PA6, PA7) sends data to Nokia5110 LCD
 
 */
-#include "..\cc3100\simplelink\include\simplelink.h"
+#include <stdint.h>
+#include <stdbool.h>
 #include "../ValvanoWareTM4C123/ValvanoWareTM4C123/inc/hw_memmap.h"
 #include "../ValvanoWareTM4C123/ValvanoWareTM4C123/inc/hw_types.h"
 #include "driverlib/debug.h"
@@ -94,11 +95,25 @@ Port A, SSI0 (PA2, PA3, PA5, PA6, PA7) sends data to Nokia5110 LCD
 #include "LED.h"
 #include "Nokia5110.h"
 #include <string.h>
-//#define SSID_NAME  "valvanoAP" /* Access point name to connect to */
+#include "ST7735.h"
+#include "ADCSWTrigger.h"
+#include "PLL.h"
+#include "Timer.h"
+#include "..\cc3100\simplelink\include\simplelink.h"
+
+
 #define SEC_TYPE   SL_SEC_TYPE_WPA
-//#define PASSKEY    "12345678"  /* Password in case of secure AP */ 
-#define SSID_NAME  "ValvanoJonathaniPhone"
-#define PASSKEY    "y2uvdjfi5puyd"
+//#define SSID_NAME  "baby"
+//#define PASSKEY    "rebecca123"
+#define SSID_NAME  "OwensMatthewiPhone"
+#define PASSKEY    "445Lmorh"
+
+#define SERVER "ee445l-rh29645.appspot.com"
+#define SERVER_REQUEST_PT1 "GET /query?city=Austin%2C%20Texas&id=Rebecca%20and%20Matt&greet="
+#define SERVER_REQUEST_PT2 " HTTP/1.1\r\nUser-Agent: Keil\r\nHost: ee445l-rh29645.appspot.com\r\n\r\n"
+#define DEFAULT_REQUEST "GET /query?city=Austin%2C%20Texas&id=Rebecca%27s%20LaunchPad&greet=hello HTTP/1.1\r\nUser-Agent: Keil\r\nHost: ee445l-rh29645.appspot.com\r\n\r\n"
+
+
 #define BAUD_RATE   115200
 void UART_Init(void){
   SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
@@ -161,12 +176,35 @@ typedef struct{
 /*
  * GLOBAL VARIABLES -- Start
  */
+#define PF1             (*((volatile uint32_t *)0x40025008))
+#define PF2                     (*((volatile uint32_t *)0x40025010))
+
+
+#define SIZE 20
+#define MAX_ADC 4096
+#define MIN_ADC 3744
+#define MAX_LENGTH 3	// cm
 
 char Recvbuff[MAX_RECV_BUFF_SIZE];
 char SendBuff[MAX_SEND_BUFF_SIZE];
 char HostName[MAX_HOSTNAME_SIZE];
 unsigned long DestinationIP;
 int SockID;
+const char TempSearch[] = "\"temp\"";
+const char Comma[] = ",";
+const char TempOutput[] = "Temp: ";
+const char Celcius[] = " C";
+const char Colon[] = ":";
+const char ADCoutput[] = "ADC: ";
+const char Decimal[] = ".";
+const char Centimeter[] = " cm";
+const char TimeSearch[] = "2017";
+char TempDest[SIZE]; // stores entire temp output string
+char ADCdest[SIZE];
+char ADCdata[SIZE];
+volatile uint32_t ADCvalue;
+char ServerMsg[500]; // stores message to send to server
+
 
 
 typedef enum{
@@ -188,6 +226,13 @@ UINT32  g_Status = 0;
 
 static int32_t configureSimpleLinkToDefaultState(char *);
 
+void SendToServer(INT32, SlSockAddrIn_t);
+void OutputTemperature(void);
+void ClearTempDest(void);
+void SampleADC(void);
+void ClearADCdest(void);
+void ExtractTime(void);
+
 
 /*
  * STATIC FUNCTION DEFINITIONS -- End
@@ -205,16 +250,23 @@ void Crash(uint32_t time){
  */
 // 1) change Austin Texas to your city
 // 2) you can change metric to imperial if you want temperature in F
-#define REQUEST "GET /data/2.5/weather?q=Austin%20Texas&APPID=1bc54f645c5f1c75e681c102ed4bbca4&units=metric HTTP/1.1\r\nUser-Agent: Keil\r\nHost:api.openweathermap.org\r\nAccept: */*\r\n\r\n"
+#define WEATHER_REQUEST "GET /data/2.5/weather?q=Austin%20Texas&APPID=1bc54f645c5f1c75e681c102ed4bbca4&units=metric HTTP/1.1\r\nUser-Agent: Keil\r\nHost:api.openweathermap.org\r\nAccept: */*\r\n\r\n"
 // 1) go to http://openweathermap.org/appid#use 
 // 2) Register on the Sign up page
 // 3) get an API key (APPID) replace the 1234567890abcdef1234567890abcdef with your APPID
 int main(void){int32_t retVal;  SlSecParams_t secParams;
+	Output_Init();
+	ST7735_FillScreen(ST7735_BLACK);
+	ADC0_InitSWTriggerSeq3_Ch9();  
+	Timer0A_Init1HzInt();
+
   char *pConfig = NULL; INT32 ASize = 0; SlSockAddrIn_t  Addr;
+	stopWDT();        // Stop WDT 
   initClk();        // PLL 50 MHz
   UART_Init();      // Send data to PC, 115200 bps
   LED_Init();       // initialize LaunchPad I/O 
-  UARTprintf("Weather App\n");
+	
+  UARTprintf("\nWeather App\n");
   retVal = configureSimpleLinkToDefaultState(pConfig); // set policies
   if(retVal < 0)Crash(4000000);
   retVal = sl_Start(0, pConfig, 0);
@@ -230,19 +282,22 @@ int main(void){int32_t retVal;  SlSecParams_t secParams;
   while(1){
    // strcpy(HostName,"openweathermap.org");  // used to work 10/2015
     strcpy(HostName,"api.openweathermap.org"); // works 9/2016
-    retVal = sl_NetAppDnsGetHostByName(HostName,
-             strlen(HostName),&DestinationIP, SL_AF_INET);
+		retVal = 1;
+		retVal = sl_NetAppDnsGetHostByName(HostName,
+						 strlen(HostName),&DestinationIP, SL_AF_INET);
+		
     if(retVal == 0){
       Addr.sin_family = SL_AF_INET;
       Addr.sin_port = sl_Htons(80);
       Addr.sin_addr.s_addr = sl_Htonl(DestinationIP);// IP to big endian 
       ASize = sizeof(SlSockAddrIn_t);
       SockID = sl_Socket(SL_AF_INET,SL_SOCK_STREAM, 0);
+			retVal = -1;
       if( SockID >= 0 ){
-        retVal = sl_Connect(SockID, ( SlSockAddr_t *)&Addr, ASize);
+				retVal = sl_Connect(SockID, ( SlSockAddr_t *)&Addr, ASize);
       }
       if((SockID >= 0)&&(retVal >= 0)){
-        strcpy(SendBuff,REQUEST); 
+        strcpy(SendBuff,WEATHER_REQUEST); 
         sl_Send(SockID, SendBuff, strlen(SendBuff), 0);// Send the HTTP GET 
         sl_Recv(SockID, Recvbuff, MAX_RECV_BUFF_SIZE, 0);// Receive response 
         sl_Close(SockID);
@@ -251,10 +306,185 @@ int main(void){int32_t retVal;  SlSecParams_t secParams;
         UARTprintf(Recvbuff);  UARTprintf("\r\n");
       }
     }
+		OutputTemperature();
+		SampleADC();
+		//SendToServer(ASize, Addr);
+		ExtractTime();
     while(Board_Input()==0){}; // wait for touch
     LED_GreenOff();
   }
 }
+
+void OutputTemperature() {
+	ST7735_FillScreen(ST7735_BLACK); 
+  ST7735_SetCursor(0,0);
+	ClearTempDest();
+	char* tempStart = strstr(Recvbuff, TempSearch); 	// look for "temp" in Recvbuff
+	char* numStart = strstr(tempStart, Colon);	// colon indicates beginning of number
+	char* numEnd = strstr(numStart, Comma); // commoa indicates end of temp data
+	numStart++; // don't want to include colon
+	int16_t count = 0;
+	
+	while(*numStart != *numEnd) { // *end is ","
+		count++;
+		numStart++;
+	}
+	
+	numStart = numStart - count;
+	char tempVal[count];
+	
+	for(int i = 0; i < count; i++) {
+		tempVal[i] = *(numStart + i);
+	}
+	
+	strcat(TempDest, TempOutput);
+	strcat(TempDest, tempVal);
+	strcat(TempDest, Celcius);
+	
+	ST7735_DrawString(0, 0, TempDest, ST7735_YELLOW);
+	UARTprintf("\n");
+	UARTprintf(TempDest);
+	UARTprintf("\n");
+	
+}
+
+void ClearTempDest() {
+	for(int i = 0; i < SIZE; i++) {
+		TempDest[i] = 0;
+	}
+}
+
+void SampleADC() {
+	ClearADCdest();
+	ADCvalue = ADC0_InSeq3();
+	
+	// convert value to length
+	int32_t val = ADCvalue - MIN_ADC;
+	if(val < 0) { val = 0; }
+	uint32_t percent = val*1000/(MAX_ADC - MIN_ADC);
+	uint32_t length = percent*MAX_LENGTH;	// 3 decimal places
+	//UARTprintf("ADC = %u\n", length);
+	
+	// output length to LCD
+	uint32_t thous = length/1000;
+	uint32_t rem = length % 1000;
+	uint32_t hund = rem/100;
+	rem = rem % 100;
+	uint32_t tens = rem/10;
+	uint32_t ones = rem % 10;
+	
+	char digits[6];
+	digits[0] = thous + '0';
+	digits[1] = '.';
+	digits[2] = hund + '0';
+	digits[3] = tens + '0';
+	digits[4] = ones + '0';
+	digits[5] = '\0';
+	
+	strcat(ADCdest, ADCoutput);
+	strcat(ADCdest, digits);
+	strcat(ADCdest, Centimeter);
+	
+	ST7735_DrawString(0, 1, ADCdest, ST7735_YELLOW);
+	UARTprintf(ADCdest);
+	//UARTprintf("%u", ADCvalue);
+	UARTprintf("\n");
+	
+	// convert ADC string so spaces are represented correctly
+	// for sending to server
+	int j = 0;
+	for(int i = 0; i < SIZE; i++) {
+		if(ADCdest[i] == ' ') {
+			ADCdata[j] = '%';
+			j++;
+			ADCdata[j] = '2';
+			j++;
+			ADCdata[j] = '0';
+			j++;
+		} else {
+			ADCdata[j] = ADCdest[i];
+			j++;
+		}
+		if(j == SIZE) { break;}
+	}
+}
+
+void ClearADCdest() {
+	for(int i = 0; i < SIZE; i++) {
+		ADCdest[i] = 0;
+	}
+}
+
+void ExtractTime() {
+	char* timeStart = strstr(Recvbuff, TimeSearch); 	// look for "2017" in Recvbuff
+	timeStart =  timeStart + 5; // time begins 5 spaces after "2017"
+	char hour[2];
+	char minute[2];
+	char second[2];
+	
+	hour[0] = *timeStart; // hour tens
+	timeStart++;
+	hour[1] = *timeStart; // hour ones
+	timeStart = timeStart + 2; // skip colon to get to minute
+	minute[0] = *timeStart; // minute tens
+	timeStart++;
+	minute[1] = *timeStart; // minute ones
+	timeStart = timeStart + 2;
+	second[0] = *timeStart; // seconds tens
+	timeStart++;
+	second[1] = *timeStart; // seconds ones
+		
+	int32_t hourVal = (hour[0] - '0')*10 + (hour[1] - '0');
+	int32_t minVal = (minute[0] - '0')*10 + (minute[1] - '0');
+	int32_t secVal = (second[0] - '0')*10 + (second[1] - '0');
+	
+	hourVal = hourVal - 6; // convert GMT to CT
+	if(hourVal < 0) {
+		hourVal = 24 + hourVal;
+	}
+
+	UARTprintf("time %u:%u:%u\n", hourVal, minVal, secVal);
+	SetTime(hourVal, minVal, secVal);
+	
+}
+
+void SendToServer(INT32 ASize, SlSockAddrIn_t  Addr){
+	
+	strcat(ServerMsg, SERVER_REQUEST_PT1);
+	//strcat(ServerMsg, TempDest);
+	//strcat(ServerMsg, "%20");
+	strcat(ServerMsg, ADCdata);
+	strcat(ServerMsg, SERVER_REQUEST_PT2);
+		
+	int32_t retVal; 
+	strcpy(HostName,SERVER); // works 9/2016
+	retVal = 1;
+	retVal = sl_NetAppDnsGetHostByName(HostName,
+					 strlen(HostName),&DestinationIP, SL_AF_INET);
+	
+	if(retVal == 0){
+		Addr.sin_family = SL_AF_INET;
+		Addr.sin_port = sl_Htons(80);
+		Addr.sin_addr.s_addr = sl_Htonl(DestinationIP);// IP to big endian 
+		ASize = sizeof(SlSockAddrIn_t);
+		SockID = sl_Socket(SL_AF_INET,SL_SOCK_STREAM, 0);
+		retVal = -1;
+		if( SockID >= 0 ){
+			retVal = sl_Connect(SockID, ( SlSockAddr_t *)&Addr, ASize);
+		}
+		if((SockID >= 0)&&(retVal >= 0)){
+			//strcpy(SendBuff,ServerMsg); 
+			strcpy(SendBuff,DEFAULT_REQUEST); // use when toggling PF1
+			sl_Send(SockID, SendBuff, strlen(SendBuff), 0);// Send the HTTP GET 
+			sl_Recv(SockID, Recvbuff, MAX_RECV_BUFF_SIZE, 0);// Receive response 
+			sl_Close(SockID);
+			LED_GreenOn();
+			UARTprintf("\r\n\r\n");
+			UARTprintf(Recvbuff);  UARTprintf("\r\n");
+		}
+	}
+}
+
 
 /*!
     \brief This function puts the device in its default state. It:
@@ -541,8 +771,8 @@ void SimpleLinkSockEventHandler(SlSockEvent_t *pSock){
     break;
   }
 }
+
 /*
  * * ASYNCHRONOUS EVENT HANDLERS -- End
  */
-
 
