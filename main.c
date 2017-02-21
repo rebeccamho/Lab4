@@ -78,8 +78,10 @@ UART0 (PA1, PA0) sends data to the PC via the USB debug cable, 115200 baud rate
 Port A, SSI0 (PA2, PA3, PA5, PA6, PA7) sends data to Nokia5110 LCD
 
 */
-#include <stdint.h>
-#include <stdbool.h>
+//#include <stdint.h>
+//#include <stdbool.h>
+#include "..\cc3100\simplelink\include\simplelink.h"
+
 #include "../ValvanoWareTM4C123/ValvanoWareTM4C123/inc/hw_memmap.h"
 #include "../ValvanoWareTM4C123/ValvanoWareTM4C123/inc/hw_types.h"
 #include "driverlib/debug.h"
@@ -98,18 +100,16 @@ Port A, SSI0 (PA2, PA3, PA5, PA6, PA7) sends data to Nokia5110 LCD
 #include "ST7735.h"
 #include "ADCSWTrigger.h"
 #include "PLL.h"
-#include "Timer.h"
-#include "..\cc3100\simplelink\include\simplelink.h"
 
 
 #define SEC_TYPE   SL_SEC_TYPE_WPA
-//#define SSID_NAME  "baby"
-//#define PASSKEY    "rebecca123"
-#define SSID_NAME  "OwensMatthewiPhone"
-#define PASSKEY    "445Lmorh"
+#define SSID_NAME  "baby"
+#define PASSKEY    "rebecca123"
+//#define SSID_NAME  "OwensMatthewiPhone"
+//#define PASSKEY    "445Lmorh"
 
 #define SERVER "ee445l-rh29645.appspot.com"
-#define SERVER_REQUEST_PT1 "GET /query?city=Austin%2C%20Texas&id=Rebecca%20and%20Matt&greet="
+#define SERVER_REQUEST_PT1 "GET /query?city=Austin%2C%20Texas&id=Rebecca%20and%20Matt%20Test&greet="
 #define SERVER_REQUEST_PT2 " HTTP/1.1\r\nUser-Agent: Keil\r\nHost: ee445l-rh29645.appspot.com\r\n\r\n"
 #define DEFAULT_REQUEST "GET /query?city=Austin%2C%20Texas&id=Rebecca%27s%20LaunchPad&greet=hello HTTP/1.1\r\nUser-Agent: Keil\r\nHost: ee445l-rh29645.appspot.com\r\n\r\n"
 
@@ -182,8 +182,8 @@ typedef struct{
 
 #define SIZE 20
 #define MAX_ADC 4096
-#define MIN_ADC 3744
-#define MAX_LENGTH 3	// cm
+#define MIN_ADC 3970
+#define MAX_LENGTH 5	// cm
 
 char Recvbuff[MAX_RECV_BUFF_SIZE];
 char SendBuff[MAX_SEND_BUFF_SIZE];
@@ -224,6 +224,8 @@ UINT32  g_Status = 0;
  * STATIC FUNCTION DEFINITIONS  -- Start
  */
 
+void EnableInterrupts(void);
+void DisableInterrupts(void);
 static int32_t configureSimpleLinkToDefaultState(char *);
 
 void SendToServer(INT32, SlSockAddrIn_t);
@@ -258,7 +260,6 @@ int main(void){int32_t retVal;  SlSecParams_t secParams;
 	Output_Init();
 	ST7735_FillScreen(ST7735_BLACK);
 	ADC0_InitSWTriggerSeq3_Ch9();  
-	Timer0A_Init1HzInt();
 
   char *pConfig = NULL; INT32 ASize = 0; SlSockAddrIn_t  Addr;
 	stopWDT();        // Stop WDT 
@@ -308,8 +309,7 @@ int main(void){int32_t retVal;  SlSecParams_t secParams;
     }
 		OutputTemperature();
 		SampleADC();
-		//SendToServer(ASize, Addr);
-		ExtractTime();
+		SendToServer(ASize, Addr);
     while(Board_Input()==0){}; // wait for touch
     LED_GreenOff();
   }
@@ -363,7 +363,6 @@ void SampleADC() {
 	if(val < 0) { val = 0; }
 	uint32_t percent = val*1000/(MAX_ADC - MIN_ADC);
 	uint32_t length = percent*MAX_LENGTH;	// 3 decimal places
-	//UARTprintf("ADC = %u\n", length);
 	
 	// output length to LCD
 	uint32_t thous = length/1000;
@@ -386,8 +385,10 @@ void SampleADC() {
 	strcat(ADCdest, Centimeter);
 	
 	ST7735_DrawString(0, 1, ADCdest, ST7735_YELLOW);
+	ST7735_SetCursor(0,2);
+	ST7735_OutUDec(ADCvalue);
 	UARTprintf(ADCdest);
-	//UARTprintf("%u", ADCvalue);
+	UARTprintf("\n%u", ADCvalue);
 	UARTprintf("\n");
 	
 	// convert ADC string so spaces are represented correctly
@@ -415,38 +416,6 @@ void ClearADCdest() {
 	}
 }
 
-void ExtractTime() {
-	char* timeStart = strstr(Recvbuff, TimeSearch); 	// look for "2017" in Recvbuff
-	timeStart =  timeStart + 5; // time begins 5 spaces after "2017"
-	char hour[2];
-	char minute[2];
-	char second[2];
-	
-	hour[0] = *timeStart; // hour tens
-	timeStart++;
-	hour[1] = *timeStart; // hour ones
-	timeStart = timeStart + 2; // skip colon to get to minute
-	minute[0] = *timeStart; // minute tens
-	timeStart++;
-	minute[1] = *timeStart; // minute ones
-	timeStart = timeStart + 2;
-	second[0] = *timeStart; // seconds tens
-	timeStart++;
-	second[1] = *timeStart; // seconds ones
-		
-	int32_t hourVal = (hour[0] - '0')*10 + (hour[1] - '0');
-	int32_t minVal = (minute[0] - '0')*10 + (minute[1] - '0');
-	int32_t secVal = (second[0] - '0')*10 + (second[1] - '0');
-	
-	hourVal = hourVal - 6; // convert GMT to CT
-	if(hourVal < 0) {
-		hourVal = 24 + hourVal;
-	}
-
-	UARTprintf("time %u:%u:%u\n", hourVal, minVal, secVal);
-	SetTime(hourVal, minVal, secVal);
-	
-}
 
 void SendToServer(INT32 ASize, SlSockAddrIn_t  Addr){
 	
@@ -473,8 +442,8 @@ void SendToServer(INT32 ASize, SlSockAddrIn_t  Addr){
 			retVal = sl_Connect(SockID, ( SlSockAddr_t *)&Addr, ASize);
 		}
 		if((SockID >= 0)&&(retVal >= 0)){
-			//strcpy(SendBuff,ServerMsg); 
-			strcpy(SendBuff,DEFAULT_REQUEST); // use when toggling PF1
+			strcpy(SendBuff,ServerMsg); 
+			//strcpy(SendBuff,DEFAULT_REQUEST); // use when toggling PF1
 			sl_Send(SockID, SendBuff, strlen(SendBuff), 0);// Send the HTTP GET 
 			sl_Recv(SockID, Recvbuff, MAX_RECV_BUFF_SIZE, 0);// Receive response 
 			sl_Close(SockID);

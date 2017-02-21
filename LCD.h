@@ -3,7 +3,6 @@
 // Matt Owens & Rebecca Ho
 // 2/17/17
 
-#include <stdint.h>
 
 typedef enum  { tensH = 0,
 								onesH = 1,

@@ -20,15 +20,17 @@ struct TimeSet {
 typedef struct TimeSet TimeSet;
 
 
-TimeSet timeSetting[6] = {{5,15,'0',ST7735_WHITE,ST7735_BLACK,3},{25,15,'1',ST7735_WHITE,ST7735_BLACK,3},
-		{50,15,'0',ST7735_WHITE,ST7735_BLACK,3},{75,15,'0',ST7735_WHITE,ST7735_BLACK,3},
-		{100,15,'0',ST7735_WHITE,ST7735_BLACK,3},{125,15,'0',ST7735_WHITE,ST7735_BLACK,3}};
+TimeSet timeSetting[6] = {{5,30,'0',ST7735_WHITE,ST7735_BLACK,2},{20,30,'1',ST7735_WHITE,ST7735_BLACK,2},
+		{45,30,'0',ST7735_WHITE,ST7735_BLACK,2},{60,30,'0',ST7735_WHITE,ST7735_BLACK,2},
+		{85,30,'0',ST7735_WHITE,ST7735_BLACK,2},{100,30,'0',ST7735_WHITE,ST7735_BLACK,2}};
 		// index 0 is hour tens, 1 is hour ones, 2 is minute tens, 3 is minute ones, 4 is sec tens, 5 is sec tens
 
 void DrawTime() {
-	ST7735_DrawChar(35, 0, ':', ST7735_WHITE, ST7735_BLACK, 3);
+	ST7735_DrawChar(32, 30, ':', ST7735_WHITE, ST7735_BLACK, 2);
+	ST7735_DrawChar(72, 30, ':', ST7735_WHITE, ST7735_BLACK, 2);
 	TimeSet current;
-	for(int i = 0; i < 4; i++) { // iterate through timeSettings
+	for(int i = 0; i < 6; i++) { // iterate through timeSettings
+		current = timeSetting[i];
 		ST7735_DrawChar(current.x, current.y, current.num, current.fontColor, current.backColor, current.size);
 	}
 }		

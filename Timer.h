@@ -3,7 +3,7 @@
 // Matt Owens & Rebecca Ho
 // 2/17/17
 
-#include <stdint.h>
+//#include <stdint.h>
 #include <stdbool.h>
 
 //------------Timer0A_Init1HzInt------------

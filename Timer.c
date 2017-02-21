@@ -3,9 +3,11 @@
 // Matt Owens & Rebecca Ho
 // 2/17/17
 
+#include <stdint.h>
 #include "Timer.h"
 #include "../ValvanoWareTM4C123/ValvanoWareTM4C123/inc/tm4c123gh6pm.h"
 #include "LCD.h"
+#include "LED.h"
 
 void DisableInterrupts(void); // Disable interrupts
 void EnableInterrupts(void);  // Enable interrupts
@@ -32,7 +34,7 @@ void Timer0A_Init1HzInt(void){
   // **** timer0A initialization ****
                                    // configure for periodic mode
   TIMER0_TAMR_R = TIMER_TAMR_TAMR_PERIOD;
-  TIMER0_TAILR_R = 79999999;         // start value for 1 Hz interrupts 79999999
+  TIMER0_TAILR_R = 49999999;         // start value for 1 Hz interrupts 79999999
   TIMER0_IMR_R |= TIMER_IMR_TATOIM;// enable timeout (rollover) interrupt
   TIMER0_ICR_R = TIMER_ICR_TATOCINT;// clear timer0A timeout flag
   TIMER0_CTL_R |= TIMER_CTL_TAEN;  // enable timer0A 32-b, periodic, interrupts
@@ -44,6 +46,7 @@ void Timer0A_Init1HzInt(void){
 
 
 void Timer0A_Handler(void){
+	LED_BlueToggle();
 	if(setting) { return; }
 	
   TIMER0_ICR_R = TIMER_ICR_TATOCINT;    // acknowledge timer0A timeout
